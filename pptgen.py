@@ -120,27 +120,30 @@ def create_presentation(slides, template_path):
         return None
 
     for slide_data in slides:
+        # Attempt to use layout index 1 (commonly "Title and Content")
         try:
-            slide_layout = prs.slide_layouts[1]  # Adjust layout index if needed
+            slide_layout = prs.slide_layouts[1]
         except IndexError:
             st.error("The selected template does not have the expected slide layout.")
             continue
 
         slide = prs.slides.add_slide(slide_layout)
-        
-        # Set the slide title
-        title_placeholder = slide.shapes.title
-        title_placeholder.text = slide_data.get("title", "")
-        
-        # Set the slide content
+
+        # Set the slide title if the title placeholder exists.
+        if hasattr(slide.shapes, "title") and slide.shapes.title is not None:
+            title_placeholder = slide.shapes.title
+            title_placeholder.text = slide_data.get("title", "")
+        else:
+            st.warning("This slide does not have a title placeholder.")
+
+        # Set the slide content if a content placeholder exists.
         try:
             content_placeholder = slide.placeholders[1]
             content_placeholder.text = slide_data.get("content", "")
         except IndexError:
-            # If the layout does not have a second placeholder, skip adding text.
-            pass
-        
-        # Try to select an image based on the slide keywords
+            st.warning("This slide does not have a content placeholder.")
+
+        # Try to select an image based on the slide keywords.
         keywords = slide_data.get("keywords", [])
         image_path = select_image_for_slide(keywords)
         if image_path and os.path.exists(image_path):
@@ -148,7 +151,7 @@ def create_presentation(slides, template_path):
             top = Inches(1)
             height = Inches(4)
             slide.shapes.add_picture(image_path, left, top, height=height)
-    
+
     return prs
 
 def main():
