@@ -68,7 +68,7 @@ Example output:
 }}
 """
     try:
-        # Use the correct syntax for the chat completions call.
+        # Use correct syntax for chat completions call.
         response = openai.chat.completions.create(
             model="gpt-4o",  # Using GPT-4o as requested
             messages=[
@@ -146,8 +146,7 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 def create_content_presentation(slides, content_template_path):
     """
     Create a presentation containing content slides using the provided content template.
-    This function creates slides based on the base slide design in the content template,
-    laying out a text area (left) and an image area (right) so that they do not overlap.
+    The base slide design is used to layout a text area (left) and image area (right).
     """
     prs = Presentation(content_template_path)
     if len(prs.slides) == 0:
@@ -229,32 +228,35 @@ def create_content_presentation(slides, content_template_path):
 def clone_slide(target_pres, source_slide):
     """
     Clone a slide from a source presentation into the target presentation.
-    This hack uses deepcopy on the slide's XML.
+    This hack iterates over all shapes in the source slide and deepcopies their XML.
+    (Note: This is a workaround since python-pptx does not natively support slide cloning.)
     """
     blank_layout = target_pres.slide_layouts[6]  # Use a blank layout
     new_slide = target_pres.slides.add_slide(blank_layout)
     for shape in source_slide.shapes:
-        new_slide.shapes._spTree.insert_element_before(deepcopy(shape.element), 'p:extLst')
+        try:
+            new_slide.shapes._spTree.insert_element_before(deepcopy(shape.element), 'p:extLst')
+        except Exception as e:
+            st.write(f"Error cloning shape: {e}")
     return new_slide
 
 def build_final_presentation(content_pres, title_path, thankyou_path, presentation_title, institution):
     """
     Build the final presentation by:
-      1. Loading the Title slide from Title.pptx and updating it with the presentation title and institution.
+      1. Loading the Title slide from Title.pptx, updating its text, and cloning it.
       2. Cloning all content slides from the generated content presentation.
-      3. Loading the Thank You slide from ThankYou.pptx and appending it.
+      3. Loading the Thank You slide from ThankYou.pptx and cloning it as the final slide.
     All slides are cloned into a new blank presentation.
     """
-    final_pres = Presentation()  # new blank presentation
+    final_pres = Presentation()  # Create a new blank presentation
 
-    # Load and update the Title slide.
+    # --- Title Slide ---
     title_pres = Presentation(title_path)
     title_slide = title_pres.slides[0]
-    # Update title text (assume the main title placeholder is present).
+    # Update title slide text.
     if title_slide.shapes.title:
         title_slide.shapes.title.text = presentation_title
         title_slide.shapes.title.text_frame.word_wrap = True
-    # Try to update a subtitle placeholder with the institution.
     try:
         subtitle = title_slide.placeholders[1]
         subtitle.text = institution
@@ -267,18 +269,15 @@ def build_final_presentation(content_pres, title_path, thankyou_path, presentati
         textbox = title_slide.shapes.add_textbox(left, top, width, height)
         textbox.text_frame.text = institution
         textbox.text_frame.word_wrap = True
-
-    # Clone the Title slide into the final presentation.
     clone_slide(final_pres, title_slide)
 
-    # Clone each content slide from the generated content presentation.
+    # --- Content Slides ---
     for slide in content_pres.slides:
         clone_slide(final_pres, slide)
 
-    # Load the Thank You slide.
+    # --- Thank You Slide ---
     thankyou_pres = Presentation(thankyou_path)
     thankyou_slide = thankyou_pres.slides[0]
-    # Clone the Thank You slide into the final presentation.
     clone_slide(final_pres, thankyou_slide)
 
     return final_pres
@@ -286,18 +285,19 @@ def build_final_presentation(content_pres, title_path, thankyou_path, presentati
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
-        "Enter your presentation instructions below. The output presentation will include a custom Title slide, "
-        "content slides generated from your input (with images selected via computer vision), and a Thank You slide at the end."
+        "Enter your presentation instructions below. The output presentation will include a custom Title slide "
+        "(with the presentation title and institution), content slides (with text and images laid out side-by-side), "
+        "and a Thank You slide at the end."
     )
 
-    # Additional fields for title slide information.
+    # Fields for title slide information.
     presentation_title = st.text_input("Presentation Title", "My Presentation")
     institution = st.text_input("University/College", "ABC College")
 
-    # Use fixed paths for title and Thank You slides.
+    # Define fixed paths for the title and Thank You slides.
     title_path = os.path.join("templates", "Title.pptx")
     thankyou_path = os.path.join("templates", "ThankYou.pptx")
-    # For content slides, use the content template.
+    # Use the content template for content slides.
     content_template_path = os.path.join("templates", "powerpointtemplate.pptx")
 
     user_instructions = st.text_area("Presentation Instructions", height=150)
