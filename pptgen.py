@@ -78,7 +78,6 @@ Example output:
         response_content = response.choices[0].message.content.strip()
         st.write("Raw GPT Output:", response_content)  # Debug output
 
-        # Remove markdown code fences if present.
         if response_content.startswith("```"):
             lines = response_content.splitlines()
             if len(lines) > 2:
@@ -139,31 +138,28 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 
 def create_final_presentation(slides, template_path, presentation_title, institution):
     """
-    Builds the final presentation using your three-slide master template.
-    The master template (template.pptx) should have:
-      - Layout 0: Title slide (with editable text placeholders).
+    Builds the final presentation using your three-slide master template (template.pptx).
+    The template should have:
+      - Layout 0: Title slide (with editable placeholders for title and institution).
       - Layout 1: Content slide.
       - Layout 2: Thank You slide.
-    The final presentation will include:
+    The final presentation includes:
       1. A Title slide (layout 0) updated with presentation_title and institution.
-      2. One content slide per GPT-generated slide (layout 1) with text on the left and best-fit image on the right.
+      2. One content slide per GPT-generated slide (layout 1) with text on the left and a best-fit image on the right.
       3. A Thank You slide (layout 2) appended as the final slide.
     """
     # Load the master template.
     master_pres = Presentation(template_path)
-    # Retrieve custom layouts (assumed ordered as described).
     title_layout = master_pres.slide_layouts[0]
     content_layout = master_pres.slide_layouts[1]
     thankyou_layout = master_pres.slide_layouts[2]
 
     # Create a new presentation based on the master template.
     final_pres = Presentation(template_path)
-    # Remove all default slides.
-    sldIdLst = final_pres.slides._sldIdLst
-    while len(sldIdLst):
-        sldIdLst.remove(sldIdLst[0])
-    
-    # Determine slide width (in inches).
+    # Remove all default slides by iterating over a copy of the slides list.
+    for slide in list(final_pres.slides):
+        slide._element.getparent().remove(slide._element)
+
     slide_width_inches = final_pres.slide_width / 914400
 
     # --- Title Slide ---
@@ -180,11 +176,8 @@ def create_final_presentation(slides, template_path, presentation_title, institu
         tb.text_frame.text = institution
         tb.text_frame.word_wrap = True
 
-    # --- Filter out any GPT slide that duplicates the title slide ---
-    filtered_slides = [s for s in slides if s.get("title", "").strip().lower() != presentation_title.strip().lower()]
-
     # --- Content Slides ---
-    # Layout parameters: reserve left 60% for text and right 40% for image.
+    filtered_slides = [s for s in slides if s.get("title", "").strip().lower() != presentation_title.strip().lower()]
     left_margin = 0.5
     right_margin = 0.5
     gap = 0.5
@@ -203,7 +196,6 @@ def create_final_presentation(slides, template_path, presentation_title, institu
             tbox = slide.shapes.add_textbox(Inches(text_left), Inches(0.5), Inches(text_width), Inches(1))
             tbox.text_frame.text = slide_data.get("title", "")
             tbox.text_frame.word_wrap = True
-
         try:
             content_ph = slide.placeholders[1]
             content_ph.text = slide_data.get("content", "")
@@ -214,20 +206,13 @@ def create_final_presentation(slides, template_path, presentation_title, institu
             cbox = slide.shapes.add_textbox(Inches(text_left), Inches(1.8), Inches(text_width), Inches(3))
             cbox.text_frame.text = slide_data.get("content", "")
             cbox.text_frame.word_wrap = True
-
         best_image = select_best_image_for_slide(slide_data)
         if best_image and os.path.exists(best_image):
             slide.shapes.add_picture(best_image, Inches(image_left), Inches(1), width=Inches(image_width))
 
     # --- Thank You Slide ---
     thankyou_slide = final_pres.slides.add_slide(thankyou_layout)
-    # (The Thank You slide design is assumed to be pre-configured in the template.)
-
-    # Verify: The final presentation should have exactly (len(filtered_slides) + 2) slides.
-    expected_slide_count = len(filtered_slides) + 2
-    while len(final_pres.slides) > expected_slide_count:
-        sldIdLst = final_pres.slides._sldIdLst
-        sldIdLst.remove(final_pres.slides[-1]._element)
+    # The Thank You slide remains unchanged.
 
     return final_pres
 
@@ -242,7 +227,6 @@ def main():
     presentation_title = st.text_input("Presentation Title", "My Presentation")
     institution = st.text_input("University/College", "ABC College")
 
-    # Use the new master template file.
     template_path = os.path.join("templates", "template.pptx")
     if not os.path.exists(template_path):
         st.error("Master template file not found in the templates folder!")
