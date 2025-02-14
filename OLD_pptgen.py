@@ -2,12 +2,26 @@ import streamlit as st
 import openai
 import json
 import os
+import torch
+from transformers import CLIPProcessor, CLIPModel
 from pptx import Presentation
 from pptx.util import Inches
 from io import BytesIO
+from PIL import Image
 
 # Set OpenAI API key from Streamlit secrets
 openai.api_key = st.secrets["openai_api_key"]
+
+# Load CLIP model and processor (this may take a few seconds on first load)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+@st.cache_resource
+def load_clip_model():
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    model.to(device)
+    return model, processor
+
+clip_model, clip_processor = load_clip_model()
 
 def get_template_file():
     """
@@ -33,9 +47,8 @@ def get_template_file():
 
 def generate_slides(user_instructions):
     """
-    Use GPT-4o to generate a JSON object containing slide data based solely on the
-    user instructions. The expected JSON format is:
-    
+    Use GPT-4o to generate slide content in JSON format.
+    Expected output:
     {
       "slides": [
          {
@@ -46,8 +59,6 @@ def generate_slides(user_instructions):
          ...
       ]
     }
-    
-    The output should include no extra commentary.
     """
     prompt = f"""
 You are an assistant that completely rewrites presentation content based solely on the user instructions provided.
@@ -78,8 +89,9 @@ Example output:
 }}
 """
     try:
+        # Use the correct syntax for the chat completions call
         response = openai.chat.completions.create(
-            model="gpt-4o",  # Use GPT-4o as requested
+            model="gpt-4o",  # Using GPT-4o as requested
             messages=[
                 {"role": "system", "content": "You generate presentation slide content in JSON based solely on user instructions."},
                 {"role": "user", "content": prompt}
@@ -88,7 +100,7 @@ Example output:
         )
         response_content = response.choices[0].message.content.strip()
         st.write("Raw GPT Output:", response_content)  # Debug output
-        
+
         # Remove markdown code fences if present
         if response_content.startswith("```"):
             lines = response_content.splitlines()
@@ -96,56 +108,89 @@ Example output:
                 response_content = "\n".join(lines[1:-1]).strip()
             else:
                 response_content = response_content.strip("```").strip()
-        
+
         slides_data = json.loads(response_content)
         return slides_data.get("slides", [])
     except Exception as e:
         st.error(f"Error generating slides: {e}")
         return None
 
-def select_image_for_slide(keywords, images_folder="images"):
+def select_best_image_for_slide(slide_data, images_folder="images"):
     """
-    Given a list of keywords, search for an image file (jpg, jpeg, png) in the images folder
-    whose filename contains one of the keywords.
+    Use CLIP to compute the similarity between the slide's text and each image.
+    The slide's text is computed from its title, content, and keywords.
+    Returns the image path with the highest cosine similarity.
     """
     if not os.path.isdir(images_folder):
         return None
 
+    # Combine slide text (title, content, keywords) for comparison.
+    slide_text = " ".join([
+        slide_data.get("title", ""),
+        slide_data.get("content", ""),
+        " ".join(slide_data.get("keywords", []))
+    ]).strip()
+    if not slide_text:
+        return None
+
+    # Compute text embedding.
+    text_inputs = clip_processor(text=[slide_text], return_tensors="pt", padding=True)
+    with torch.no_grad():
+        text_features = clip_model.get_text_features(**text_inputs).to(device)
+    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+    best_score = -1.0
+    best_image = None
+
+    # Iterate over images in the folder.
     for filename in os.listdir(images_folder):
         if filename.lower().endswith((".jpg", ".jpeg", ".png")):
-            for kw in keywords:
-                if kw.lower() in filename.lower():
-                    return os.path.join(images_folder, filename)
-    return None
+            image_path = os.path.join(images_folder, filename)
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except Exception as e:
+                st.write(f"Error opening image {filename}: {e}")
+                continue
+            image_inputs = clip_processor(images=image, return_tensors="pt")
+            with torch.no_grad():
+                image_features = clip_model.get_image_features(**image_inputs).to(device)
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            score = torch.cosine_similarity(text_features, image_features).item()
+            st.write(f"Similarity score for '{filename}': {score:.2f}")
+            if score > best_score:
+                best_score = score
+                best_image = image_path
+
+    st.write("Selected best image:", best_image, "with score:", best_score)
+    return best_image
 
 def create_presentation(slides, template_path):
     """
-    Create a new presentation using the provided template as the base design.
-    The template is assumed to have a single slide; this slide is updated with the first
-    slide's content, and additional slides are created using the same slide layout.
-    Text wrapping is explicitly enabled for both title and content placeholders.
+    Create a presentation using the provided template as the base design.
+    The template is assumed to have a single slide; that slide is updated with the first slide's content,
+    and additional slides are created using the same layout.
+    Text wrapping is enabled, and images are inserted based on the best-fit selection using CLIP.
     """
     prs = Presentation(template_path)
     if len(prs.slides) == 0:
         st.error("Template does not contain any slides.")
         return None
 
-    # Use the existing slide as the base slide design.
+    # Use the base slide from the template.
     base_slide = prs.slides[0]
     first_slide_data = slides[0]
 
-    # Update the title.
+    # Update the base slide's title.
     if base_slide.shapes.title:
         base_slide.shapes.title.text = first_slide_data.get("title", "")
         base_slide.shapes.title.text_frame.word_wrap = True
 
-    # Update content. If a content placeholder exists (assumed at index 1), use it.
+    # Update the base slide's content.
     try:
         content_placeholder = base_slide.placeholders[1]
         content_placeholder.text = first_slide_data.get("content", "")
         content_placeholder.text_frame.word_wrap = True
     except (IndexError, KeyError):
-        # If no placeholder is available, add a new textbox.
         left = Inches(1)
         top = Inches(2)
         width = Inches(8)
@@ -154,16 +199,15 @@ def create_presentation(slides, template_path):
         textbox.text_frame.text = first_slide_data.get("content", "")
         textbox.text_frame.word_wrap = True
 
-    # Add an image (if available) to the base slide.
-    keywords = first_slide_data.get("keywords", [])
-    image_path = select_image_for_slide(keywords)
-    if image_path and os.path.exists(image_path):
-        base_slide.shapes.add_picture(image_path, Inches(5), Inches(1), height=Inches(4))
+    # Insert best-fit image for the base slide.
+    best_image = select_best_image_for_slide(first_slide_data)
+    if best_image and os.path.exists(best_image):
+        base_slide.shapes.add_picture(best_image, Inches(5), Inches(1), height=Inches(4))
 
-    # Retrieve the base slide's layout for new slides.
+    # Retrieve the base slide's layout for additional slides.
     base_layout = base_slide.slide_layout
 
-    # For each additional GPT slide, add a new slide with the same layout.
+    # Create additional slides.
     for slide_data in slides[1:]:
         new_slide = prs.slides.add_slide(base_layout)
         if new_slide.shapes.title:
@@ -182,20 +226,19 @@ def create_presentation(slides, template_path):
             textbox.text_frame.text = slide_data.get("content", "")
             textbox.text_frame.word_wrap = True
 
-        keywords = slide_data.get("keywords", [])
-        image_path = select_image_for_slide(keywords)
-        if image_path and os.path.exists(image_path):
-            new_slide.shapes.add_picture(image_path, Inches(5), Inches(1), height=Inches(4))
+        best_image = select_best_image_for_slide(slide_data)
+        if best_image and os.path.exists(best_image):
+            new_slide.shapes.add_picture(best_image, Inches(5), Inches(1), height=Inches(4))
     return prs
 
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
-        "Enter your presentation instructions below. The output presentation will fully reflect your input text, "
-        "using the selected template's base slide design. Text will be wrapped appropriately."
+        "Enter your presentation instructions below. The output presentation will reflect your input text, "
+        "using the selected template's base slide design. Text will wrap appropriately, and images will be inserted "
+        "based on a computer vision analysis (using CLIP) of the slide content."
     )
 
-    # Use the template file from the templates folder.
     template_path = get_template_file()
     if template_path is None:
         st.stop()
