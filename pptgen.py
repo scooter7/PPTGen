@@ -12,7 +12,8 @@ openai.api_key = st.secrets["openai_api_key"]
 def get_template_file():
     """
     Lists available template files from the "templates" folder and
-    lets the user select one. Supports both .pptx and .ppt files.
+    lets the user select one. (This file is expected to be a blank template
+    that contains only the desired theme, not pre-built slides.)
     """
     templates_folder = "templates"
     if not os.path.isdir(templates_folder):
@@ -87,7 +88,7 @@ Example output:
             temperature=0.7,
         )
         response_content = response.choices[0].message.content.strip()
-        st.write("Raw GPT Output:", response_content)  # Debug: view raw output
+        st.write("Raw GPT Output:", response_content)  # Debug output
         
         # Remove markdown code fences if present
         if response_content.startswith("```"):
@@ -118,85 +119,43 @@ def select_image_for_slide(keywords, images_folder="images"):
                     return os.path.join(images_folder, filename)
     return None
 
-def remove_all_slides(prs):
+def create_new_presentation(slides):
     """
-    Completely remove all slides from the presentation.
-    This uses a while loop on the underlying XML element to ensure
-    that every slide is removed.
+    Create an entirely new PowerPoint presentation from scratch,
+    using the default presentation. (Note: This will not apply a custom theme.)
+    If you require your custom theme, please create a blank version of your template
+    (with no pre-built slides) and use that file as your starting point.
     """
-    sldIdLst = prs.slides._sldIdLst
-    while len(sldIdLst) > 0:
-        sldIdLst.remove(sldIdLst[0])
-
-def create_presentation(slides, template_path):
-    """
-    Create a PowerPoint presentation using the provided slide data and a template.
-    The template is used only for its theme (colors, fonts, layout, etc.).
-    All original slides are removed so that the output presentation includes only
-    the content generated based on user instructions.
-    """
-    try:
-        prs = Presentation(template_path)
-    except Exception as e:
-        st.error(f"Failed to load template: {e}")
-        return None
-
-    # Remove all slides from the template so that we start with a blank slate.
-    remove_all_slides(prs)
-    st.write("Slide count after removal:", len(prs.slides))
-
+    prs = Presentation()  # Creates a new blank presentation
     for slide_data in slides:
-        # Use layout index 1 (commonly "Title and Content")
-        try:
-            slide_layout = prs.slide_layouts[1]
-        except IndexError:
-            st.error("The selected template does not have the expected slide layout.")
-            continue
-
+        # Use a basic layout (e.g., layout index 0)
+        slide_layout = prs.slide_layouts[0]
         slide = prs.slides.add_slide(slide_layout)
-
-        # Set the slide title.
-        try:
-            title_placeholder = slide.shapes.title
-            if title_placeholder:
-                title_placeholder.text = slide_data.get("title", "")
-        except Exception:
-            st.warning("This slide does not have a title placeholder.")
-
-        # Set the slide content. If the content placeholder is missing, add a textbox.
-        content_set = False
-        try:
-            content_placeholder = slide.placeholders[1]
-            content_placeholder.text = slide_data.get("content", "")
-            content_set = True
-        except (IndexError, KeyError):
-            pass
-
-        if not content_set:
-            left = Inches(1)
-            top = Inches(2)
-            width = Inches(8)
-            height = Inches(3)
-            textbox = slide.shapes.add_textbox(left, top, width, height)
-            textbox.text_frame.text = slide_data.get("content", "")
-
+        
+        # Set the slide title if available
+        if slide.shapes.title:
+            slide.shapes.title.text = slide_data.get("title", "")
+        
+        # Add a textbox for the slide content
+        left = Inches(1)
+        top = Inches(2)
+        width = Inches(8)
+        height = Inches(3)
+        textbox = slide.shapes.add_textbox(left, top, width, height)
+        textbox.text_frame.text = slide_data.get("content", "")
+        
         # Add an image if a matching one is found.
         keywords = slide_data.get("keywords", [])
         image_path = select_image_for_slide(keywords)
         if image_path and os.path.exists(image_path):
-            left = Inches(5)
-            top = Inches(1)
-            height = Inches(4)
-            slide.shapes.add_picture(image_path, left, top, height=height)
-    
+            slide.shapes.add_picture(image_path, Inches(5), Inches(1), height=Inches(4))
     return prs
 
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
         "Enter your presentation instructions below. The output presentation will completely reflect your input text. "
-        "A selected template is used only for styling (colors, fonts, layout), while all text and images are generated "
-        "based on your instructions."
+        "To use a custom theme, please ensure your selected template file is a blank template (with no pre-built slides)."
     )
 
     # Let the user select a template file from the "templates" folder.
@@ -222,7 +181,8 @@ def main():
         st.json(slides)
         
         with st.spinner("Creating PowerPoint presentation..."):
-            prs = create_presentation(slides, template_path)
+            # Create a brand new presentation file using our new function.
+            prs = create_new_presentation(slides)
             if prs is None:
                 st.error("Error creating presentation.")
                 return
