@@ -1,3 +1,6 @@
 streamlit
 openai
 python-pptx
+transformers
+torch
+Pillow
