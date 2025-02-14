@@ -140,7 +140,7 @@ def create_presentation(slides, template_path):
         try:
             content_placeholder = slide.placeholders[1]
             content_placeholder.text = slide_data.get("content", "")
-        except IndexError:
+        except (IndexError, KeyError):
             st.warning("This slide does not have a content placeholder.")
 
         # Try to select an image based on the slide keywords.
