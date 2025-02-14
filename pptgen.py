@@ -33,44 +33,45 @@ def get_template_file():
 def generate_slides(user_instructions):
     """
     Use OpenAI ChatCompletion to generate slide content using GPT-4o.
-    The generated JSON must completely reflect the user-entered instructions.
-    The output JSON should be in the following format:
+    The output JSON must completely reflect the user instructions.
+    Expected output format:
     
     {
       "slides": [
         {
           "title": "Slide Title",
-          "content": "Full text content that is completely rewritten based on the user instructions.",
+          "content": "Full text content rewritten to reflect the user instructions.",
           "keywords": ["keyword1", "keyword2"]
         },
         ...
       ]
     }
     
-    **Important:** The output should not include any of the template’s default text.
+    The output should contain only the JSON.
     """
     prompt = f"""
 You are an assistant that completely rewrites presentation content based solely on the user instructions provided.
-Do not include any default template text. Your output should be a JSON object with a single key "slides", containing an array of slide objects.
+Do not include any default template text.
+Your output should be a JSON object with a single key "slides" containing an array of slide objects.
 Each slide object must have:
  - "title": a concise slide title.
- - "content": full text content for that slide that completely reflects the user instructions.
- - "keywords": an array of keywords that best describe the slide content, to help with image selection.
+ - "content": full text content that completely reflects the user instructions.
+ - "keywords": an array of keywords for image selection.
 
 User instructions: {user_instructions}
 
-Please output only the JSON, with no additional commentary or markdown formatting.
+Please output only the JSON with no additional commentary or markdown formatting.
 Example output:
 {{
   "slides": [
     {{
       "title": "Introduction",
-      "content": "This slide introduces the topic and outlines the main points.",
-      "keywords": ["introduction", "overview", "main points"]
+      "content": "This slide introduces the topic with rewritten content based on the user instructions.",
+      "keywords": ["introduction", "overview"]
     }},
     {{
       "title": "Details",
-      "content": "This slide provides detailed information about the topic.",
+      "content": "This slide provides detailed, rewritten content reflecting the user input.",
       "keywords": ["details", "information"]
     }}
   ]
@@ -78,7 +79,7 @@ Example output:
 """
     try:
         response = openai.chat.completions.create(
-            model="gpt-4o",  # Using GPT-4o
+            model="gpt-4o",  # Using GPT-4o as requested
             messages=[
                 {"role": "system", "content": "You generate presentation slide content in JSON based solely on user instructions."},
                 {"role": "user", "content": prompt}
@@ -86,8 +87,8 @@ Example output:
             temperature=0.7,
         )
         response_content = response.choices[0].message.content.strip()
-        st.write("Raw GPT Output:", response_content)  # Debug: See what GPT returns
-
+        st.write("Raw GPT Output:", response_content)  # Debug: view raw output
+        
         # Remove markdown code fences if present
         if response_content.startswith("```"):
             lines = response_content.splitlines()
@@ -119,19 +120,20 @@ def select_image_for_slide(keywords, images_folder="images"):
 
 def remove_all_slides(prs):
     """
-    Remove all slides from the presentation.
-    WARNING: This directly manipulates the underlying XML and is a workaround.
+    Completely remove all slides from the presentation.
+    This uses a while loop on the underlying XML element to ensure
+    that every slide is removed.
     """
-    xml_slides = prs.slides._sldIdLst  
-    for sld in list(xml_slides):
-        xml_slides.remove(sld)
+    sldIdLst = prs.slides._sldIdLst
+    while len(sldIdLst) > 0:
+        sldIdLst.remove(sldIdLst[0])
 
 def create_presentation(slides, template_path):
     """
     Create a PowerPoint presentation using the provided slide data and a template.
-    The template is used solely for its theme (colors, fonts, layout, etc.).
-    All original slides are removed, and each new slide is created exclusively
-    from the generated slide data.
+    The template is used only for its theme (colors, fonts, layout, etc.).
+    All original slides are removed so that the output presentation includes only
+    the content generated based on user instructions.
     """
     try:
         prs = Presentation(template_path)
@@ -139,9 +141,10 @@ def create_presentation(slides, template_path):
         st.error(f"Failed to load template: {e}")
         return None
 
-    # Remove all existing slides so that only the new generated slides appear.
+    # Remove all slides from the template so that we start with a blank slate.
     remove_all_slides(prs)
-    
+    st.write("Slide count after removal:", len(prs.slides))
+
     for slide_data in slides:
         # Use layout index 1 (commonly "Title and Content")
         try:
@@ -152,7 +155,7 @@ def create_presentation(slides, template_path):
 
         slide = prs.slides.add_slide(slide_layout)
 
-        # Set the slide title
+        # Set the slide title.
         try:
             title_placeholder = slide.shapes.title
             if title_placeholder:
@@ -160,8 +163,7 @@ def create_presentation(slides, template_path):
         except Exception:
             st.warning("This slide does not have a title placeholder.")
 
-        # Set the slide content.
-        # If the default content placeholder is missing, add a new textbox.
+        # Set the slide content. If the content placeholder is missing, add a textbox.
         content_set = False
         try:
             content_placeholder = slide.placeholders[1]
@@ -182,7 +184,6 @@ def create_presentation(slides, template_path):
         keywords = slide_data.get("keywords", [])
         image_path = select_image_for_slide(keywords)
         if image_path and os.path.exists(image_path):
-            # Place the image in a designated area.
             left = Inches(5)
             top = Inches(1)
             height = Inches(4)
@@ -193,9 +194,9 @@ def create_presentation(slides, template_path):
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
-        "Enter your presentation instructions below. The output presentation will completely "
-        "reflect your input text. A selected template is used only for styling (colors, fonts, layout), "
-        "while the text and images are entirely generated based on your instructions."
+        "Enter your presentation instructions below. The output presentation will completely reflect your input text. "
+        "A selected template is used only for styling (colors, fonts, layout), while all text and images are generated "
+        "based on your instructions."
     )
 
     # Let the user select a template file from the "templates" folder.
