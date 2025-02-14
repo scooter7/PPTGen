@@ -23,6 +23,14 @@ def load_clip_model():
 
 clip_model, clip_processor = load_clip_model()
 
+def remove_all_slides(prs):
+    """
+    Removes all slides from the presentation by iterating over the XML slide ID list.
+    """
+    sldIdLst = prs.slides._sldIdLst
+    while len(sldIdLst) > 0:
+        sldIdLst.remove(sldIdLst[0])
+
 def generate_slides(user_instructions):
     """
     Uses GPT-4o to generate slide content in JSON format.
@@ -77,14 +85,12 @@ Example output:
         )
         response_content = response.choices[0].message.content.strip()
         st.write("Raw GPT Output:", response_content)  # Debug output
-
         if response_content.startswith("```"):
             lines = response_content.splitlines()
             if len(lines) > 2:
                 response_content = "\n".join(lines[1:-1]).strip()
             else:
                 response_content = response_content.strip("```").strip()
-
         slides_data = json.loads(response_content)
         return slides_data.get("slides", [])
     except Exception as e:
@@ -139,8 +145,8 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 def create_final_presentation(slides, template_path, presentation_title, institution):
     """
     Builds the final presentation using your three-slide master template (template.pptx).
-    The template should have:
-      - Layout 0: Title slide (with editable placeholders for title and institution).
+    The master template is assumed to have three custom layouts:
+      - Layout 0: Title slide (editable placeholders).
       - Layout 1: Content slide.
       - Layout 2: Thank You slide.
     The final presentation includes:
@@ -156,10 +162,7 @@ def create_final_presentation(slides, template_path, presentation_title, institu
 
     # Create a new presentation based on the master template.
     final_pres = Presentation(template_path)
-    # Remove all default slides by iterating over a copy of the slides list.
-    for slide in list(final_pres.slides):
-        slide._element.getparent().remove(slide._element)
-
+    remove_all_slides(final_pres)
     slide_width_inches = final_pres.slide_width / 914400
 
     # --- Title Slide ---
@@ -177,6 +180,7 @@ def create_final_presentation(slides, template_path, presentation_title, institu
         tb.text_frame.word_wrap = True
 
     # --- Content Slides ---
+    # Filter out any GPT slide whose title duplicates the presentation title.
     filtered_slides = [s for s in slides if s.get("title", "").strip().lower() != presentation_title.strip().lower()]
     left_margin = 0.5
     right_margin = 0.5
@@ -196,6 +200,7 @@ def create_final_presentation(slides, template_path, presentation_title, institu
             tbox = slide.shapes.add_textbox(Inches(text_left), Inches(0.5), Inches(text_width), Inches(1))
             tbox.text_frame.text = slide_data.get("title", "")
             tbox.text_frame.word_wrap = True
+
         try:
             content_ph = slide.placeholders[1]
             content_ph.text = slide_data.get("content", "")
@@ -206,13 +211,14 @@ def create_final_presentation(slides, template_path, presentation_title, institu
             cbox = slide.shapes.add_textbox(Inches(text_left), Inches(1.8), Inches(text_width), Inches(3))
             cbox.text_frame.text = slide_data.get("content", "")
             cbox.text_frame.word_wrap = True
+
         best_image = select_best_image_for_slide(slide_data)
         if best_image and os.path.exists(best_image):
             slide.shapes.add_picture(best_image, Inches(image_left), Inches(1), width=Inches(image_width))
 
     # --- Thank You Slide ---
     thankyou_slide = final_pres.slides.add_slide(thankyou_layout)
-    # The Thank You slide remains unchanged.
+    # (The Thank You slide design is assumed to be pre-configured in the template.)
 
     return final_pres
 
