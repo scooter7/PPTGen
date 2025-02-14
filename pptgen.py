@@ -23,31 +23,20 @@ def load_clip_model():
 
 clip_model, clip_processor = load_clip_model()
 
-def get_template_file():
+def get_content_template():
     """
-    Let the user select a content template from the "templates" folder.
-    (This file is used only to help set slide dimensions; the final slides are built from scratch.)
+    Return the path to the content template (powerpointtemplate.pptx) that defines the theme.
     """
-    templates_folder = "templates"
-    if not os.path.isdir(templates_folder):
-        st.error("Templates folder not found!")
+    template_path = os.path.join("templates", "powerpointtemplate.pptx")
+    if not os.path.exists(template_path):
+        st.error("Content template not found in the templates folder!")
         return None
-
-    template_files = [f for f in os.listdir(templates_folder) if f.lower().endswith(('.pptx', '.ppt'))]
-    if not template_files:
-        st.error("No template files found in the templates folder!")
-        return None
-
-    selected_template = st.selectbox("Select a Content Template", template_files)
-    template_path = os.path.join(templates_folder, selected_template)
-    if selected_template.lower().endswith('.ppt'):
-        st.warning("PPT templates are not directly supported. Please use a PPTX template or convert your PPT to PPTX.")
     return template_path
 
 def generate_slides(user_instructions):
     """
     Use GPT-4o to generate slide content in JSON format.
-    Expected output (as JSON):
+    Expected output:
     {
       "slides": [
          {
@@ -89,7 +78,7 @@ Example output:
 """
     try:
         response = openai.chat.completions.create(
-            model="gpt-4o",  # Using GPT-4o as requested
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You generate presentation slide content in JSON based solely on user instructions."},
                 {"role": "user", "content": prompt}
@@ -130,7 +119,6 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
     if not slide_text:
         return None
 
-    # Compute text embedding.
     text_inputs = clip_processor(text=[slide_text], return_tensors="pt", padding=True)
     with torch.no_grad():
         text_features = clip_model.get_text_features(**text_inputs).to(device)
@@ -162,36 +150,34 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 
 def create_final_presentation(slides, content_template_path, presentation_title, institution):
     """
-    Create a new final presentation from scratch.
-    The final presentation will include:
-      1. A title slide (with the presentation title and institution).
-      2. Content slides (generated from the GPT output, with text on the left and an image on the right).
-      3. An ending Thank You slide.
-    The layout uses the slide dimensions derived from a content template.
+    Create the final presentation using the content template (which defines the theme).
+    The final presentation includes:
+      1. A Title slide (built from the content template) updated with presentation_title and institution.
+      2. One slide per GPT-generated content slide (with text on the left and best-fit image on the right).
+      3. A Thank You slide.
+    All slides use the theme defined in the content template.
     """
-    # Create a new blank presentation.
-    final_pres = Presentation()
-    # Remove any default slide.
-    while len(final_pres.slides) > 0:
-        final_pres.slides._sldIdLst.remove(final_pres.slides[0]._element)
+    # Load the content template; this preserves its theme and master.
+    final_pres = Presentation(content_template_path)
+    # Use the first slide as the Title slide.
+    title_slide = final_pres.slides[0]
+    # Clear any existing text (if necessary) and add title & institution.
+    # Here, we assume the title slide will have two textboxes.
+    # Remove all shapes from the title slide (except the background) if needed.
+    # For simplicity, we add two new textboxes.
+    slide_width_inches = final_pres.slide_width / 914400
 
-    # Determine slide dimensions from a content template.
-    content_pres = Presentation(content_template_path)
-    slide_width_inches = content_pres.slide_width / 914400  # EMU to inches
-
-    # --- Title Slide ---
-    title_slide = final_pres.slides.add_slide(final_pres.slide_layouts[6])
-    # Add title textbox.
+    # Add Title textbox.
     title_box = title_slide.shapes.add_textbox(Inches(1), Inches(1), Inches(slide_width_inches - 2), Inches(1.5))
     title_box.text_frame.text = presentation_title
     title_box.text_frame.word_wrap = True
-    # Add institution textbox.
+    # Add Institution textbox.
     inst_box = title_slide.shapes.add_textbox(Inches(1), Inches(2.7), Inches(slide_width_inches - 2), Inches(1))
     inst_box.text_frame.text = institution
     inst_box.text_frame.word_wrap = True
 
-    # --- Content Slides ---
-    # Layout: reserve left 60% for text, right 40% for image.
+    # --- Add Content Slides ---
+    # Define layout: left 60% for text, right 40% for image.
     left_margin = 0.5
     right_margin = 0.5
     gap = 0.5
@@ -201,13 +187,20 @@ def create_final_presentation(slides, content_template_path, presentation_title,
     text_left = left_margin
     image_left = left_margin + text_width + gap
 
+    # For each GPT slide, add a new slide using a blank layout from the content template.
+    # We'll use slide_layouts[6] (a blank layout) if available; otherwise, use the first layout.
+    try:
+        blank_layout = final_pres.slide_layouts[6]
+    except Exception:
+        blank_layout = final_pres.slide_layouts[0]
+
     for slide_data in slides:
-        slide = final_pres.slides.add_slide(final_pres.slide_layouts[6])
-        # Add title textbox at the top.
+        slide = final_pres.slides.add_slide(blank_layout)
+        # Add Title textbox.
         tbox = slide.shapes.add_textbox(Inches(text_left), Inches(0.5), Inches(text_width), Inches(1))
         tbox.text_frame.text = slide_data.get("title", "")
         tbox.text_frame.word_wrap = True
-        # Add content textbox below title.
+        # Add Content textbox.
         cbox = slide.shapes.add_textbox(Inches(text_left), Inches(1.8), Inches(text_width), Inches(3))
         cbox.text_frame.text = slide_data.get("content", "")
         cbox.text_frame.word_wrap = True
@@ -216,8 +209,8 @@ def create_final_presentation(slides, content_template_path, presentation_title,
         if best_image and os.path.exists(best_image):
             slide.shapes.add_picture(best_image, Inches(image_left), Inches(1), width=Inches(image_width))
 
-    # --- Thank You Slide ---
-    thankyou_slide = final_pres.slides.add_slide(final_pres.slide_layouts[6])
+    # --- Add Thank You Slide ---
+    thankyou_slide = final_pres.slides.add_slide(blank_layout)
     ty_box = thankyou_slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(slide_width_inches - 2), Inches(1.5))
     ty_box.text_frame.text = "Thank You"
     ty_box.text_frame.word_wrap = True
@@ -227,17 +220,16 @@ def create_final_presentation(slides, content_template_path, presentation_title,
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
-        "Enter your presentation instructions below. The final presentation will include a Title slide "
-        "(with your presentation title and university/college), content slides generated from your input "
-        "(with text on the left and a best-fit image on the right), and a Thank You slide at the end."
+        "Enter your presentation instructions below. The final presentation will include a Title slide (with your presentation title and university/college), "
+        "content slides generated from your input (with text on the left and a best-fit image on the right), and a Thank You slide at the end. "
+        "All slides will use the theme defined in your content template (powerpointtemplate.pptx)."
     )
 
-    # Fields for title slide information.
+    # Fields for Title slide information.
     presentation_title = st.text_input("Presentation Title", "My Presentation")
     institution = st.text_input("University/College", "ABC College")
 
-    # Select a content template (used only for slide dimensions).
-    content_template_path = get_template_file()
+    content_template_path = get_content_template()
     if content_template_path is None:
         st.stop()
 
