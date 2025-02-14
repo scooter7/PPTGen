@@ -74,6 +74,18 @@ Only output the JSON and nothing else.
             temperature=0.7,
         )
         response_content = response.choices[0].message.content.strip()
+        st.write("Raw output from GPT:", response_content)  # Debug line to check the output
+        
+        # Remove markdown code block markers if present
+        if response_content.startswith("```"):
+            # Remove the first line (```json) and the last line (```)
+            lines = response_content.splitlines()
+            # If there are more than 2 lines, join them excluding the first and last
+            if len(lines) > 2:
+                response_content = "\n".join(lines[1:-1]).strip()
+            else:
+                response_content = response_content.strip("```").strip()
+        
         slides_data = json.loads(response_content)
         return slides_data["slides"]
     except Exception as e:
