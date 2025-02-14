@@ -3,8 +3,7 @@ import openai
 import json
 import os
 from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.util import Inches
 from io import BytesIO
 
 # Set OpenAI API key from Streamlit secrets
@@ -34,50 +33,62 @@ def get_template_file():
 def generate_slides(user_instructions):
     """
     Use OpenAI ChatCompletion to generate slide content using GPT-4o.
-    We expect a JSON output of the following form:
+    The generated JSON must completely reflect the user-entered instructions.
+    The output JSON should be in the following format:
+    
     {
       "slides": [
         {
           "title": "Slide Title",
-          "content": "Slide content as bullet points or a paragraph.",
+          "content": "Full text content that is completely rewritten based on the user instructions.",
           "keywords": ["keyword1", "keyword2"]
         },
         ...
       ]
     }
+    
+    **Important:** The output should not include any of the template’s default text.
     """
     prompt = f"""
-You are an assistant that creates slide content for a presentation.
-Based on the following instructions, generate a JSON with an array of slides.
-User instructions: {user_instructions}
-Please output valid JSON in the following format:
+You are an assistant that completely rewrites presentation content based solely on the user instructions provided.
+Do not include any default template text. Your output should be a JSON object with a single key "slides", containing an array of slide objects.
+Each slide object must have:
+ - "title": a concise slide title.
+ - "content": full text content for that slide that completely reflects the user instructions.
+ - "keywords": an array of keywords that best describe the slide content, to help with image selection.
 
+User instructions: {user_instructions}
+
+Please output only the JSON, with no additional commentary or markdown formatting.
+Example output:
 {{
   "slides": [
     {{
-      "title": "Slide Title",
-      "content": "Slide content for the slide. It may be bullet points or a short paragraph.",
-      "keywords": ["keyword1", "keyword2"]
+      "title": "Introduction",
+      "content": "This slide introduces the topic and outlines the main points.",
+      "keywords": ["introduction", "overview", "main points"]
     }},
-    ...
+    {{
+      "title": "Details",
+      "content": "This slide provides detailed information about the topic.",
+      "keywords": ["details", "information"]
+    }}
   ]
 }}
-
-Only output the JSON and nothing else.
 """
     try:
         response = openai.chat.completions.create(
             model="gpt-4o",  # Using GPT-4o
             messages=[
-                {"role": "system", "content": "You generate presentation slide content in JSON."},
+                {"role": "system", "content": "You generate presentation slide content in JSON based solely on user instructions."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
         )
         response_content = response.choices[0].message.content.strip()
-        st.write("Raw output from GPT:", response_content)  # Debug output
-        
-        # Remove markdown code block markers if present
+        st.write("Raw GPT Output:", response_content)  # Debug: See what GPT returns
+
+        # Remove markdown code fences if present
         if response_content.startswith("```"):
             lines = response_content.splitlines()
             if len(lines) > 2:
@@ -86,7 +97,7 @@ Only output the JSON and nothing else.
                 response_content = response_content.strip("```").strip()
         
         slides_data = json.loads(response_content)
-        return slides_data["slides"]
+        return slides_data.get("slides", [])
     except Exception as e:
         st.error(f"Error generating slides: {e}")
         return None
@@ -118,8 +129,9 @@ def remove_all_slides(prs):
 def create_presentation(slides, template_path):
     """
     Create a PowerPoint presentation using the provided slide data and a template.
-    The template is used solely for its theme (colors, fonts, layout) and all
-    original slides are removed before adding the new content.
+    The template is used solely for its theme (colors, fonts, layout, etc.).
+    All original slides are removed, and each new slide is created exclusively
+    from the generated slide data.
     """
     try:
         prs = Presentation(template_path)
@@ -127,12 +139,11 @@ def create_presentation(slides, template_path):
         st.error(f"Failed to load template: {e}")
         return None
 
-    # Remove all existing slides so that only our generated slides appear.
+    # Remove all existing slides so that only the new generated slides appear.
     remove_all_slides(prs)
     
-    # For each generated slide, add a new slide using a chosen layout.
-    # We assume layout index 1 is a "Title and Content" layout.
     for slide_data in slides:
+        # Use layout index 1 (commonly "Title and Content")
         try:
             slide_layout = prs.slide_layouts[1]
         except IndexError:
@@ -141,7 +152,7 @@ def create_presentation(slides, template_path):
 
         slide = prs.slides.add_slide(slide_layout)
 
-        # Set the slide title.
+        # Set the slide title
         try:
             title_placeholder = slide.shapes.title
             if title_placeholder:
@@ -160,20 +171,18 @@ def create_presentation(slides, template_path):
             pass
 
         if not content_set:
-            # Add a new textbox if no content placeholder is found.
             left = Inches(1)
             top = Inches(2)
             width = Inches(8)
             height = Inches(3)
             textbox = slide.shapes.add_textbox(left, top, width, height)
-            tf = textbox.text_frame
-            tf.text = slide_data.get("content", "")
+            textbox.text_frame.text = slide_data.get("content", "")
 
-        # Try to select an image based on the slide keywords.
+        # Add an image if a matching one is found.
         keywords = slide_data.get("keywords", [])
         image_path = select_image_for_slide(keywords)
         if image_path and os.path.exists(image_path):
-            # Add the image in a designated area.
+            # Place the image in a designated area.
             left = Inches(5)
             top = Inches(1)
             height = Inches(4)
@@ -183,7 +192,11 @@ def create_presentation(slides, template_path):
 
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
-    st.write("Enter your presentation instructions below. The output presentation will entirely reflect your input text, using a selected template for styling and layout.")
+    st.write(
+        "Enter your presentation instructions below. The output presentation will completely "
+        "reflect your input text. A selected template is used only for styling (colors, fonts, layout), "
+        "while the text and images are entirely generated based on your instructions."
+    )
 
     # Let the user select a template file from the "templates" folder.
     template_path = get_template_file()
@@ -200,8 +213,8 @@ def main():
         with st.spinner("Generating slide content..."):
             slides = generate_slides(user_instructions)
         
-        if slides is None:
-            st.error("Failed to generate slide content.")
+        if slides is None or len(slides) == 0:
+            st.error("Failed to generate slide content. Check your instructions and try again.")
             return
         
         st.subheader("Generated Slide Data")
