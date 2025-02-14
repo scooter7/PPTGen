@@ -89,7 +89,7 @@ Example output:
 }}
 """
     try:
-        # Use the correct syntax for the chat completions call
+        # Using correct syntax for chat completions call:
         response = openai.chat.completions.create(
             model="gpt-4o",  # Using GPT-4o as requested
             messages=[
@@ -101,7 +101,7 @@ Example output:
         response_content = response.choices[0].message.content.strip()
         st.write("Raw GPT Output:", response_content)  # Debug output
 
-        # Remove markdown code fences if present
+        # Remove markdown code fences if present.
         if response_content.startswith("```"):
             lines = response_content.splitlines()
             if len(lines) > 2:
@@ -124,7 +124,7 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
     if not os.path.isdir(images_folder):
         return None
 
-    # Combine slide text (title, content, keywords) for comparison.
+    # Combine slide text.
     slide_text = " ".join([
         slide_data.get("title", ""),
         slide_data.get("content", ""),
@@ -166,15 +166,31 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 
 def create_presentation(slides, template_path):
     """
-    Create a presentation using the provided template as the base design.
-    The template is assumed to have a single slide; that slide is updated with the first slide's content,
-    and additional slides are created using the same layout.
-    Text wrapping is enabled, and images are inserted based on the best-fit selection using CLIP.
+    Create a presentation using the provided template's base slide design.
+    The template is assumed to have a single slide; that slide is updated with the first
+    slide's content, and additional slides are created using the same layout.
+    The slide layout is adjusted so that the text area (on the left) and image area (on the right)
+    do not overlap. The image is scaled to fit within its allocated area.
     """
     prs = Presentation(template_path)
     if len(prs.slides) == 0:
         st.error("Template does not contain any slides.")
         return None
+
+    # Compute layout parameters.
+    # Convert slide width (in EMU) to inches.
+    slide_width_inches = prs.slide_width / 914400  
+    left_margin = 0.5
+    right_margin = 0.5
+    gap = 0.5  # gap between text and image
+    available_width = slide_width_inches - left_margin - right_margin
+    # Allocate 60% of available width to text and 40% to image.
+    text_width = (available_width * 0.6) - (gap / 2)
+    image_width = (available_width * 0.4) - (gap / 2)
+    text_left = left_margin
+    image_left = left_margin + text_width + gap
+
+    st.write(f"Slide width: {slide_width_inches:.2f} inches, Text area: {text_width:.2f} inches, Image area: {image_width:.2f} inches")
 
     # Use the base slide from the template.
     base_slide = prs.slides[0]
@@ -185,15 +201,18 @@ def create_presentation(slides, template_path):
         base_slide.shapes.title.text = first_slide_data.get("title", "")
         base_slide.shapes.title.text_frame.word_wrap = True
 
-    # Update the base slide's content.
+    # Update (or add) the content textbox on the base slide.
     try:
         content_placeholder = base_slide.placeholders[1]
         content_placeholder.text = first_slide_data.get("content", "")
         content_placeholder.text_frame.word_wrap = True
+        # Reposition and resize the placeholder.
+        content_placeholder.left = Inches(text_left)
+        content_placeholder.width = Inches(text_width)
     except (IndexError, KeyError):
-        left = Inches(1)
+        left = Inches(text_left)
         top = Inches(2)
-        width = Inches(8)
+        width = Inches(text_width)
         height = Inches(3)
         textbox = base_slide.shapes.add_textbox(left, top, width, height)
         textbox.text_frame.text = first_slide_data.get("content", "")
@@ -202,7 +221,8 @@ def create_presentation(slides, template_path):
     # Insert best-fit image for the base slide.
     best_image = select_best_image_for_slide(first_slide_data)
     if best_image and os.path.exists(best_image):
-        base_slide.shapes.add_picture(best_image, Inches(5), Inches(1), height=Inches(4))
+        # Insert the image scaled to the allocated width.
+        base_slide.shapes.add_picture(best_image, Inches(image_left), Inches(1), width=Inches(image_width))
 
     # Retrieve the base slide's layout for additional slides.
     base_layout = base_slide.slide_layout
@@ -217,10 +237,12 @@ def create_presentation(slides, template_path):
             content_placeholder = new_slide.placeholders[1]
             content_placeholder.text = slide_data.get("content", "")
             content_placeholder.text_frame.word_wrap = True
+            content_placeholder.left = Inches(text_left)
+            content_placeholder.width = Inches(text_width)
         except (IndexError, KeyError):
-            left = Inches(1)
+            left = Inches(text_left)
             top = Inches(2)
-            width = Inches(8)
+            width = Inches(text_width)
             height = Inches(3)
             textbox = new_slide.shapes.add_textbox(left, top, width, height)
             textbox.text_frame.text = slide_data.get("content", "")
@@ -228,15 +250,15 @@ def create_presentation(slides, template_path):
 
         best_image = select_best_image_for_slide(slide_data)
         if best_image and os.path.exists(best_image):
-            new_slide.shapes.add_picture(best_image, Inches(5), Inches(1), height=Inches(4))
+            new_slide.shapes.add_picture(best_image, Inches(image_left), Inches(1), width=Inches(image_width))
     return prs
 
 def main():
     st.title("AI-Powered PowerPoint Presentation Generator")
     st.write(
         "Enter your presentation instructions below. The output presentation will reflect your input text, "
-        "using the selected template's base slide design. Text will wrap appropriately, and images will be inserted "
-        "based on a computer vision analysis (using CLIP) of the slide content."
+        "using the selected template's base slide design. Text is adjusted to avoid overlapping the image, "
+        "and images are scaled to fit within their designated area based on a computer vision analysis."
     )
 
     template_path = get_template_file()
