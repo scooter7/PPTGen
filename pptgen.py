@@ -139,16 +139,15 @@ def select_best_image_for_slide(slide_data, images_folder="images"):
 
 def create_final_presentation(slides, template_path, presentation_title, institution):
     """
-    Builds the final presentation using a three-slide master template.
-    The master template (template.pptx) has:
-      - Layout 0: Title slide (designed like Title.pptx, with editable text areas).
-      - Layout 1: Content slide (design for all content slides).
-      - Layout 2: Thank You slide (used as-is).
-    The final presentation will:
-      1. Add a Title slide (layout 0) updated with presentation_title and institution.
-      2. For each GPT-generated content slide, add a new slide using layout 1 with text on the left and a best-fit image on the right.
-      3. Append a Thank You slide (layout 2) as the final slide.
-    After building, we remove any extra blank slide at the end.
+    Builds the final presentation using your three-slide master template.
+    The master template (template.pptx) should have:
+      - Layout 0: Title slide (with editable text placeholders).
+      - Layout 1: Content slide.
+      - Layout 2: Thank You slide.
+    The final presentation will include:
+      1. A Title slide (layout 0) updated with presentation_title and institution.
+      2. One content slide per GPT-generated slide (layout 1) with text on the left and best-fit image on the right.
+      3. A Thank You slide (layout 2) appended as the final slide.
     """
     # Load the master template.
     master_pres = Presentation(template_path)
@@ -159,12 +158,12 @@ def create_final_presentation(slides, template_path, presentation_title, institu
 
     # Create a new presentation based on the master template.
     final_pres = Presentation(template_path)
-    # Remove any default slides.
-    xml_slides = final_pres.slides._sldIdLst
-    for sld in list(xml_slides):
-        xml_slides.remove(sld)
-
-    # Determine slide width (in inches) from the template.
+    # Remove all default slides.
+    sldIdLst = final_pres.slides._sldIdLst
+    while len(sldIdLst):
+        sldIdLst.remove(sldIdLst[0])
+    
+    # Determine slide width (in inches).
     slide_width_inches = final_pres.slide_width / 914400
 
     # --- Title Slide ---
@@ -181,8 +180,11 @@ def create_final_presentation(slides, template_path, presentation_title, institu
         tb.text_frame.text = institution
         tb.text_frame.word_wrap = True
 
+    # --- Filter out any GPT slide that duplicates the title slide ---
+    filtered_slides = [s for s in slides if s.get("title", "").strip().lower() != presentation_title.strip().lower()]
+
     # --- Content Slides ---
-    # Layout parameters: left 60% for text, right 40% for image.
+    # Layout parameters: reserve left 60% for text and right 40% for image.
     left_margin = 0.5
     right_margin = 0.5
     gap = 0.5
@@ -192,7 +194,7 @@ def create_final_presentation(slides, template_path, presentation_title, institu
     text_left = left_margin
     image_left = left_margin + text_width + gap
 
-    for slide_data in slides:
+    for slide_data in filtered_slides:
         slide = final_pres.slides.add_slide(content_layout)
         try:
             slide.shapes.title.text = slide_data.get("title", "")
@@ -219,14 +221,13 @@ def create_final_presentation(slides, template_path, presentation_title, institu
 
     # --- Thank You Slide ---
     thankyou_slide = final_pres.slides.add_slide(thankyou_layout)
-    # (Assumes the Thank You slide is already designed as desired.)
+    # (The Thank You slide design is assumed to be pre-configured in the template.)
 
-    # Cleanup: Ensure final presentation has exactly (len(slides) + 2) slides.
-    expected_slide_count = len(slides) + 2
+    # Verify: The final presentation should have exactly (len(filtered_slides) + 2) slides.
+    expected_slide_count = len(filtered_slides) + 2
     while len(final_pres.slides) > expected_slide_count:
-        # Remove the last slide.
-        xml_slides = final_pres.slides._sldIdLst
-        xml_slides.remove(final_pres.slides[-1]._element)
+        sldIdLst = final_pres.slides._sldIdLst
+        sldIdLst.remove(final_pres.slides[-1]._element)
 
     return final_pres
 
