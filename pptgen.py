@@ -65,7 +65,7 @@ Please output valid JSON in the following format:
 Only output the JSON and nothing else.
 """
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-4o",  # Using GPT-4o as requested
             messages=[
                 {"role": "system", "content": "You generate presentation slide content in JSON."},
